@@ -4,12 +4,14 @@
 #include <sys/event.h>
 #include <sys/time.h>
 #include "ActivityStreamAPI.h"
+#include "ActivityStreamLayout.h"
 #import <Foundation/Foundation.h>
 
 
 static BOOL canPrint=NO;
 static int filterPid=-1;
 static BOOL levelInfo=YES;
+static size_t logMessageOffset=offsetof(os_activity_stream_entry_s, log_message);
 static int (*m_proc_name)(int pid,char *buffer, unsigned int size);
 static os_activity_stream_for_pid_t s_os_activity_stream_for_pid;
 static os_activity_stream_resume_t s_os_activity_stream_resume;
@@ -80,7 +82,7 @@ BOOL handleStreamEntry(os_activity_stream_entry_t entry, int error){
     
 		if (entry->type==OS_ACTIVITY_STREAM_TYPE_LOG_MESSAGE) {
 
-			os_log_message_t log_message = &entry->log_message;
+			os_log_message_t log_message = oslog_message_at(entry, logMessageOffset);
 			
 		 
 			// Get date/time
@@ -146,6 +148,12 @@ static void NoteExitKQueueCallback(CFFileDescriptorRef f,CFOptionFlags callBackT
 
 int main(int argc, char **argv, char **envp) {
 
+
+	// Retain the existing layout on older OS releases. Only the iOS 27
+	// callback layout has been verified here; SDK version does not select it.
+	if ([[NSProcessInfo processInfo] operatingSystemVersion].majorVersion == 27) {
+		logMessageOffset = sizeof(oslog_entry_prefix_ios27);
+	}
 
 	if (!LookupSPICalls()){
 		printf("\tError: Could not find oslog required functions. iOS >=10 is required.\n");
