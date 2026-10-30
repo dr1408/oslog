@@ -17,11 +17,16 @@ A tool that shows os_log stream info/activity directly on iOS devices
 
 usage:
 
-	oslog [—info|—debug] [ -p pid ] [—noLevelInfo] [—noSubsystemInfo]
+	oslog [--info|--debug] [-p pid|name] [--noLevelInfo]
 
 	Examples:
 		oslog 
 		oslog —debug
 		oslog -p SpringBoard
+
+The ActivityStream layout is selected automatically. Build `22H374` uses the
+naturally aligned UID-bearing prefix verified in LoggingSupport 1643.120.5
+(`0x38` message offset). iOS 27 uses its verified packed prefix (`0x34`).
+Unknown builds retain the historical layout.
 
 

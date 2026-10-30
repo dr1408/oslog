@@ -1,0 +1,86 @@
+name: Build oslog
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: oslog-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build rootless iOS package
+    runs-on: macos-15
+    timeout-minutes: 15
+    env:
+      THEOS: ${{ github.workspace }}/theos
+      THEOS_PACKAGE_SCHEME: rootless
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          brew install ldid-procursus xz dpkg
+          command -v ldid
+
+      - name: Check out Theos
+        run: git clone --quiet --recursive https://github.com/theos/theos.git "$THEOS"
+
+      - name: Build package
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf packages
+          make clean all FINALPACKAGE=1
+
+          # Theos uses ldid after merging the two slices.  On this tool that
+          # produces a CodeDirectory which is valid on disk but whose
+          # generated designated requirement fails Apple's verifier.  XRa1n
+          # signs its newly-built helpers with Apple's ad-hoc signer instead.
+          binary="$(find .theos/obj -type f -name oslog -perm -111 | while read -r candidate; do
+            if file "$candidate" | grep -q 'Mach-O universal binary'; then
+              printf '%s\n' "$candidate"
+              break
+            fi
+          done)"
+          test -n "$binary"
+          codesign --force --sign - --timestamp=none \
+            -i net.limneos.oslog "$binary"
+          codesign --verify --strict "$binary"
+          test -z "$(ldid -e "$binary")"
+
+          # Packaging is deliberately separate so Theos copies the already
+          # verified universal binary without rebuilding or re-signing it.
+          make package FINALPACKAGE=1
+
+      - name: Verify outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          deb="$(find packages -maxdepth 1 -name '*.deb' -type f | head -n1)"
+          test -n "$deb"
+          rm -rf build/artifact
+          mkdir -p build/artifact
+          dpkg-deb -x "$deb" build/artifact/root
+          binary="$(find build/artifact/root -type f -path '*/usr/bin/oslog' | head -n1)"
+          test -n "$binary"
+          file "$binary" | tee build/artifact/oslog.file.txt
+          lipo -info "$binary" | tee build/artifact/oslog.archs.txt
+          codesign --verify --verbose=4 "$binary"
+          codesign -d --entitlements :- "$binary" >build/artifact/oslog.entitlements.plist 2>&1
+          cp "$deb" build/artifact/
+          cp "$binary" build/artifact/oslog
+
+      - name: Upload package and binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: oslog-rootless
+          path: build/artifact/
+          if-no-files-found: error

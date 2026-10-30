@@ -5,6 +5,23 @@
 #include <stdint.h>
 #include "ActivityStreamAPI.h"
 
+// Verified against LoggingSupport 1643.120.5 on iOS 18.7 / 22H374.
+// The UID is present at +0x10, but the following pointer remains naturally
+// 8-byte aligned, so the message/common payload begins at +0x38.
+struct oslog_entry_prefix_ios18 {
+    os_activity_stream_type_t type;
+    pid_t pid;
+    uint64_t proc_id;
+    uid_t uid;
+    const uint8_t *proc_imageuuid;
+    const char *proc_imagepath;
+    os_activity_id_t activity_id;
+    os_activity_id_t parent_id;
+};
+
+static_assert(sizeof(oslog_entry_prefix_ios18) == 0x38,
+              "iOS 18.7 message must begin at entry + 0x38");
+
 // Verified against LoggingSupport on iOS 27.2 / 24B5089g. Its callback prefix
 // has an additional 32-bit UID at +0x10 and 4-byte packing. Root/mobile
 // records contain 0/501 there; Apple's versioned decoder calls the field uid.

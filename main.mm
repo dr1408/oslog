@@ -2,7 +2,9 @@
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/event.h>
+#include <sys/sysctl.h>
 #include <sys/time.h>
+#include <vector>
 #include "ActivityStreamAPI.h"
 #include "ActivityStreamLayout.h"
 #import <Foundation/Foundation.h>
@@ -24,6 +26,15 @@ static int (*m_proc_listpids)(uint32_t type, uint32_t typeinfo, void *buffer, in
 
 void printUsage(){
 	printf("\033[1;36mUsage: \033[1;37moslog [--info|--debug] [-p <pid|name>] [--noLevelInfo]\x1b[0m\n");
+}
+
+static NSString *OSBuildVersion() {
+	char build[64] = {};
+	size_t size = sizeof(build);
+	if (sysctlbyname("kern.osversion", build, &size, NULL, 0) != 0 || build[0] == '\0') {
+		return nil;
+	}
+	return [NSString stringWithUTF8String:build];
 }
 
 
@@ -81,7 +92,6 @@ BOOL handleStreamEntry(os_activity_stream_entry_t entry, int error){
     
     
 		if (entry->type==OS_ACTIVITY_STREAM_TYPE_LOG_MESSAGE) {
-
 			os_log_message_t log_message = oslog_message_at(entry, logMessageOffset);
 			
 		 
@@ -147,11 +157,15 @@ static void NoteExitKQueueCallback(CFFileDescriptorRef f,CFOptionFlags callBackT
 }
 
 int main(int argc, char **argv, char **envp) {
+	setvbuf(stdout, NULL, _IONBF, 0);
 
 
-	// Retain the existing layout on older OS releases. Only the iOS 27
-	// callback layout has been verified here; SDK version does not select it.
-	if ([[NSProcessInfo processInfo] operatingSystemVersion].majorVersion == 27) {
+	// Select only layouts verified against the corresponding LoggingSupport
+	// implementation. Unknown builds retain the historical layout.
+	NSString *build=OSBuildVersion();
+	if ([build isEqualToString:@"22H374"]) {
+		logMessageOffset = sizeof(oslog_entry_prefix_ios18);
+	} else if ([[NSProcessInfo processInfo] operatingSystemVersion].majorVersion == 27) {
 		logMessageOffset = sizeof(oslog_entry_prefix_ios27);
 	}
 
@@ -211,7 +225,7 @@ int main(int argc, char **argv, char **envp) {
 	uint32_t activity_stream_flags = 0;
 	 
 	for (NSString *arg in arguments){
-		
+
 		if ([arg isEqual:@"--info"]){
 			activity_stream_flags |= OS_ACTIVITY_STREAM_INFO;
 			[argumentsToUse removeObject:arg];
@@ -243,8 +257,9 @@ int main(int argc, char **argv, char **envp) {
 			}
 			
 			int bufsize = m_proc_listpids(1, 0, NULL, 0);
-  			pid_t pids[2 * bufsize / sizeof(pid_t)];
-			bufsize = m_proc_listpids(1, 0, pids, sizeof(pids));
+			std::vector<pid_t> pids(2 * bufsize / sizeof(pid_t));
+			bufsize = m_proc_listpids(1, 0, pids.data(),
+									  (int)(pids.size() * sizeof(pid_t)));
 			size_t num_pids = bufsize / sizeof(pid_t);
 			BOOL foundPid=NO;
 		 	for (int i=0; i<num_pids; i++){
